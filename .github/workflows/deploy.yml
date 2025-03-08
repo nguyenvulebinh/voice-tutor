@@ -26,16 +26,24 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Clean previous build
+        run: rm -rf out/
+
       - name: Build
         run: npm run deploy
+        env:
+          NEXT_PUBLIC_BASE_PATH: /voice-tutor
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./out 
+          publish_dir: ./out
+          force_orphan: true # Creates a new history for gh-pages branch
+          commit_message: "Deploy: ${{ github.sha }}" 
