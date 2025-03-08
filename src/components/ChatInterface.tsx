@@ -19,7 +19,7 @@ interface Message {
 const VERIFICATION_MESSAGES: Message[] = [
   {
     id: '1',
-    text: 'Welcome to Voice Tutor! Please enter the access code to continue:',
+    text: 'Welcome to Voice Tutor! Please enter the access code to continue',
     type: 'assistant'
   }
 ];
@@ -240,7 +240,15 @@ export default function ChatInterface() {
     setIsProcessing(true);
     try {
       console.log('Attempting verification...');
-      const isValid = await verifyAccessCode(code);
+      const isValid = await verifyAccessCode(code).catch(error => {
+        console.error('Verification fetch error:', {
+          message: error.message,
+          status: error.status,
+          statusText: error.statusText,
+          url: error.url
+        });
+        throw new Error('Failed to connect to the verification server. Please check your internet connection and try again.');
+      });
       console.log('Verification response:', isValid);
       
       if (isValid) {
@@ -262,7 +270,7 @@ export default function ChatInterface() {
           },
           {
             id: (Date.now() + 1).toString(),
-            text: 'Invalid code. Please try again:',
+            text: 'Invalid code. Please try again',
             type: 'assistant'
           }
         ]);
@@ -273,7 +281,7 @@ export default function ChatInterface() {
         ...prev,
         {
           id: Date.now().toString(),
-          text: 'Network error during verification. Please check your internet connection and try again:',
+          text: error instanceof Error ? error.message : 'Network error during verification. Please check your internet connection and try again.',
           type: 'assistant'
         }
       ]);
@@ -309,38 +317,17 @@ export default function ChatInterface() {
     setMessages(prev => [...prev, assistantMessage]);
 
     try {
-      // Include all previous messages in the chat history
-      const systemMessage = {
-        role: 'system' as const,
-        content: `You are an experienced and friendly German language tutor helping students improve their skills. Aim for a conversational tone, like chatting with a friend. Begin by assessing the student's current proficiency level and learning objectives, using spontaneous and small talk-style interactions. 
-
-Provide brief and engaging explanations of German grammar, vocabulary, pronunciation, and conversation practices. Offer exercises, examples, and real-life scenarios to reinforce learning. Correct errors kindly with clear explanations, and offer helpful suggestions. Encourage questions, interactive dialogue, and adapt your style to the student's pace and interests.
-
-Speak like a human with compact replies since the output is intended for text-to-speech. When interacting, keep the tone relaxed, ask follow-up questions, and seamlessly blend useful language tips with natural talk.
-
-When the student uses English or Vietnamese, start by responding in the same language before gently guiding them back to German. Your goal is to make learning supportive, thorough, and enjoyable.
-
-# Notes
-
-- Encourage everyday conversation by asking simple, engaging questions.
-- Keep replies concise and naturally flowing.
-- Adapt to the student's language preferences but guide them toward German speaking.`
-      };
-
       // Get complete chat history excluding the temporary message
-      const chatHistory: ChatMessage[] = [
-        systemMessage,
-        ...messages
-          .filter(msg => !msg.id.startsWith('temp-')) // Exclude temporary messages
-          .map(msg => ({
-            role: msg.type,
-            content: msg.text
-          })),
-        {
+      const chatHistory: ChatMessage[] = messages
+        .filter(msg => !msg.id.startsWith('temp-')) // Exclude temporary messages
+        .map(msg => ({
+          role: msg.type,
+          content: msg.text
+        }))
+        .concat({
           role: userMessage.type,
           content: userMessage.text
-        }
-      ];
+        });
 
       // Get streaming response from LLM
       const llmResponse = await getChatResponse(chatHistory, accessCode, (update) => {
@@ -358,6 +345,19 @@ When the student uses English or Vietnamese, start by responding in the same lan
               : msg
           )
         );
+      }).catch(error => {
+        console.error('Chat API fetch error:', {
+          message: error.message,
+          status: error.status,
+          statusText: error.statusText,
+          url: error.url,
+          response: error.response
+        });
+        // Check if error is a JSON parse error
+        if (error.message?.includes('JSON')) {
+          throw new Error('Received invalid response from server. Please try again.');
+        }
+        throw new Error('Failed to connect to the chat server. Please check your internet connection and try again.');
       });
 
       if (llmResponse.error) {
@@ -379,6 +379,15 @@ When the student uses English or Vietnamese, start by responding in the same lan
         const ttsResponse = await synthesizeSpeech({
           text: responseData.text,
           language: responseData.language || 'de'
+        }).catch(error => {
+          console.error('TTS API fetch error:', {
+            message: error.message,
+            status: error.status,
+            statusText: error.statusText,
+            url: error.url
+          });
+          // Don't throw error for TTS failures, just log it
+          return { data: undefined };
         });
 
         setMessages(prev => 
@@ -401,7 +410,7 @@ When the student uses English or Vietnamese, start by responding in the same lan
           msg.id === assistantMessage.id 
             ? {
                 ...msg,
-                text: error instanceof Error ? error.message : 'I apologize, but I encountered an error. Please try again.'
+                text: error instanceof Error ? error.message : 'Connection error. Please check your internet and try again.'
               }
             : msg
         )
@@ -459,6 +468,20 @@ When the student uses English or Vietnamese, start by responding in the same lan
     window.scrollTo(0, 0);
   };
 
+  // Helper function to check if a message is verification-related
+  const isVerificationMessage = (message: Message) => {
+    const verificationTexts = [
+      'Invalid code. Please try again',
+      'Network error during verification',
+      'Failed to connect to the verification server',
+      'Welcome to Voice Tutor',
+      'Please enter the access code'
+    ];
+    return message.id === 'welcome' || 
+           VERIFICATION_MESSAGES.some(m => m.id === message.id) ||
+           verificationTexts.some(text => message.text.includes(text));
+  };
+
   return (
     <div className="flex flex-col h-[100dvh] max-w-4xl mx-auto relative">
       <div className="flex-1 overflow-y-auto bg-gray-50 pb-[76px]">
@@ -497,12 +520,26 @@ When the student uses English or Vietnamese, start by responding in the same lan
                     ))}
                   </div>
                 )}
-                {message.type === 'assistant' && message.audio && (
+                {message.type === 'assistant' && !message.id.startsWith('temp-') && 
+                 !isVerificationMessage(message) && (
                   <button
-                    onClick={() => playAudio(message.audio!)}
-                    className="mt-2 text-sm text-gray-600 hover:text-gray-800 flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                    onClick={() => {
+                      // Find the user message that triggered this response
+                      const messageIndex = messages.findIndex(msg => msg.id === message.id);
+                      if (messageIndex > 0 && messages[messageIndex - 1].type === 'user') {
+                        const userMessage = messages[messageIndex - 1];
+                        // Remove this and all subsequent messages
+                        setMessages(messages.slice(0, messageIndex));
+                        // Regenerate response
+                        handleUserMessage(userMessage.text);
+                      }
+                    }}
+                    className="mt-2 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
                   >
-                    🔊 Play
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    Regenerate response
                   </button>
                 )}
               </div>
