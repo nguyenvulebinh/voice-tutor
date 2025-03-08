@@ -50,7 +50,8 @@ export async function getCorrectionsAndImprovements(
       textLength: text.length,
       hasAccessCode: !!accessCode,
       accessCodeLength: accessCode?.length,
-      messageCount: messages.length
+      messageCount: messages.length,
+      userAgent: typeof window !== 'undefined' ? window.navigator.userAgent : 'unknown'
     });
 
     const response = await fetch(`${API_CONFIG.API_BASE_URL}${API_CONFIG.CORRECTIONS_ENDPOINT}`, {
@@ -58,6 +59,8 @@ export async function getCorrectionsAndImprovements(
       headers: {
         'Content-Type': 'application/json',
       },
+      mode: 'cors',
+      credentials: 'include',
       body: JSON.stringify({ 
         text,
         messages,
@@ -67,11 +70,12 @@ export async function getCorrectionsAndImprovements(
     });
 
     console.log('Correction response status:', response.status);
+    console.log('Correction response headers:', Object.fromEntries(response.headers.entries()));
 
     if (!response.ok) {
       const error = await response.json();
       console.error('Correction error response:', error);
-      throw new Error(error.error || 'Failed to get corrections');
+      throw new Error(error.error || `Failed to get corrections: ${response.status}`);
     }
 
     const data = await response.json();
