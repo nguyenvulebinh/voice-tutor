@@ -57,10 +57,8 @@ export async function getCorrectionsAndImprovements(
     const response = await fetch(`${API_CONFIG.API_BASE_URL}${API_CONFIG.CORRECTIONS_ENDPOINT}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json'
       },
-      mode: 'cors',
-      credentials: 'same-origin',
       body: JSON.stringify({ 
         text,
         messages,

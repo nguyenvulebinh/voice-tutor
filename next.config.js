@@ -9,12 +9,6 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  // Disable server components and API routes for static export
-  experimental: {
-    appDir: true,
-  },
-  // Ignore API routes during static export
-  rewrites: () => [],
   trailingSlash: true
 }
 

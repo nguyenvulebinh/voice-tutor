@@ -19,6 +19,7 @@ interface Message {
     suggestion: string;
     explanation: string;
   }[];
+  debugInfo?: string;
 }
 
 const VERIFICATION_MESSAGES: Message[] = [
@@ -44,7 +45,7 @@ export default function ChatInterface() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
   const [accessCode, setAccessCode] = useState<string | null>(null);
-  const [openSection, setOpenSection] = useState<{ messageId: string, type: 'corrections' | 'recommendations' } | null>(null);
+  const [openSection, setOpenSection] = useState<{ messageId: string, type: 'corrections' | 'recommendations' | 'debug' } | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -337,22 +338,23 @@ export default function ChatInterface() {
       };
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Get complete chat history excluding the temporary message
+      // Get complete chat history excluding the temporary message and corrections
       const chatHistory: ChatMessage[] = messages
         .filter(msg => !msg.id.startsWith('temp-') && msg.id !== 'welcome')
         .map(msg => ({
           role: msg.type,
-          content: msg.text
+          content: msg.text  // Only include the original message text
         }))
         .concat({
           role: userMessage.type,
-          content: userMessage.text
+          content: text
         });
 
       // Create a minimal history for corrections - just the last system response and current input
       const correctionHistory: ChatMessage[] = [];
       const lastSystemMessage = messages
         .filter(msg => msg.type === 'assistant' && !msg.id.startsWith('temp-'))
+        .slice(-1)  // Only get the last message
         .pop();
       
       if (lastSystemMessage) {
@@ -371,9 +373,17 @@ export default function ChatInterface() {
       const [correctionResponse, llmResponse] = await Promise.all([
         // Get corrections and improvements with minimal history
         getCorrectionsAndImprovements(text, accessCode, correctionHistory).catch(error => {
-          console.error('Correction API error:', error);
+          console.error('[Debug] Correction API error details:', {
+            error: error.message,
+            accessCode: accessCode ? 'present' : 'missing',
+            isVerified,
+            status: error.status || 'unknown',
+            response: error.response,
+          });
+          
           // If access code is invalid, revert to verification state
-          if (error.message === 'Invalid access code') {
+          if (error.message === 'Invalid access code' || error.status === 401) {
+            console.log('[Debug] Detected invalid access code, reverting to verification state');
             setIsVerified(false);
             setAccessCode(null);
             localStorage.removeItem('voice_tutor_verified');
@@ -403,30 +413,48 @@ export default function ChatInterface() {
       // Handle corrections if available and valid
       if (correctionResponse && !correctionResponse.error && correctionResponse.rawResponse) {
         try {
-          console.log('Raw response from corrections API:', correctionResponse.rawResponse);
+          console.log('[Debug] Starting to process corrections response');
+          console.log('[Debug] Raw response from corrections API:', correctionResponse.rawResponse);
+          
           // Remove markdown code block syntax if present
           const jsonStr = correctionResponse.rawResponse.replace(/```json\n|\n```/g, '');
+          console.log('[Debug] Cleaned JSON string:', jsonStr);
+          
           const parsedCorrections = JSON.parse(jsonStr);
-          console.log('Parsed corrections:', parsedCorrections);
+          console.log('[Debug] Successfully parsed corrections:', parsedCorrections);
+          console.log('[Debug] Has corrections:', Boolean(parsedCorrections?.corrections?.length));
+          console.log('[Debug] Has recommendations:', Boolean(parsedCorrections?.recommendations?.length));
 
-          // Update user message with corrections and recommendations if parsing succeeded
+          // Update assistant message with corrections and recommendations
           if (parsedCorrections?.corrections?.length || parsedCorrections?.recommendations?.length) {
-            setMessages(prev => 
-              prev.map(msg => 
+            console.log('[Debug] Updating message with corrections/recommendations');
+            setMessages(prev => {
+              const updated = prev.map(msg => 
                 msg.id === userMessage.id 
                   ? {
                       ...msg,
                       corrections: parsedCorrections.corrections,
-                      recommendations: parsedCorrections.recommendations
+                      recommendations: parsedCorrections.recommendations,
+                      debugInfo: correctionResponse.rawResponse
                     }
                   : msg
-              )
-            );
+              );
+              console.log('[Debug] Updated messages:', updated);
+              return updated;
+            });
+          } else {
+            console.log('[Debug] No corrections or recommendations to display');
           }
         } catch (e) {
-          console.error('Error parsing corrections response:', e);
-          console.log('Raw response was:', correctionResponse.rawResponse);
+          console.error('[Debug] Error parsing corrections response:', e);
+          console.log('[Debug] Raw response that caused error:', correctionResponse.rawResponse);
         }
+      } else {
+        console.log('[Debug] No valid correction response:', {
+          hasResponse: Boolean(correctionResponse),
+          hasError: Boolean(correctionResponse?.error),
+          hasRawResponse: Boolean(correctionResponse?.rawResponse)
+        });
       }
 
       // Handle chat response error
@@ -506,12 +534,12 @@ export default function ChatInterface() {
       };
       setMessages(prev => [...prev, assistantMessage]);
 
-      // Get complete chat history excluding the temporary message
+      // Get complete chat history excluding the temporary message and corrections
       const chatHistory: ChatMessage[] = messages
         .filter(msg => !msg.id.startsWith('temp-') && msg.id !== 'welcome')
         .map(msg => ({
           role: msg.type,
-          content: msg.text
+          content: msg.text  // Only include the original message text
         }))
         .concat({
           role: userMessage.type,
@@ -522,6 +550,7 @@ export default function ChatInterface() {
       const correctionHistory: ChatMessage[] = [];
       const lastSystemMessage = messages
         .filter(msg => msg.type === 'assistant' && !msg.id.startsWith('temp-'))
+        .slice(-1)  // Only get the last message
         .pop();
       
       if (lastSystemMessage) {
@@ -540,9 +569,17 @@ export default function ChatInterface() {
       const [correctionResponse, llmResponse] = await Promise.all([
         // Get corrections and improvements with minimal history
         getCorrectionsAndImprovements(userMessage.text, accessCode, correctionHistory).catch(error => {
-          console.error('Correction API error:', error);
+          console.error('[Debug] Correction API error details:', {
+            error: error.message,
+            accessCode: accessCode ? 'present' : 'missing',
+            isVerified,
+            status: error.status || 'unknown',
+            response: error.response,
+          });
+          
           // If access code is invalid, revert to verification state
-          if (error.message === 'Invalid access code') {
+          if (error.message === 'Invalid access code' || error.status === 401) {
+            console.log('[Debug] Detected invalid access code, reverting to verification state');
             setIsVerified(false);
             setAccessCode(null);
             localStorage.removeItem('voice_tutor_verified');
@@ -572,30 +609,48 @@ export default function ChatInterface() {
       // Handle corrections if available and valid
       if (correctionResponse && !correctionResponse.error && correctionResponse.rawResponse) {
         try {
-          console.log('Raw response from corrections API:', correctionResponse.rawResponse);
+          console.log('[Debug] Starting to process corrections response');
+          console.log('[Debug] Raw response from corrections API:', correctionResponse.rawResponse);
+          
           // Remove markdown code block syntax if present
           const jsonStr = correctionResponse.rawResponse.replace(/```json\n|\n```/g, '');
+          console.log('[Debug] Cleaned JSON string:', jsonStr);
+          
           const parsedCorrections = JSON.parse(jsonStr);
-          console.log('Parsed corrections:', parsedCorrections);
+          console.log('[Debug] Successfully parsed corrections:', parsedCorrections);
+          console.log('[Debug] Has corrections:', Boolean(parsedCorrections?.corrections?.length));
+          console.log('[Debug] Has recommendations:', Boolean(parsedCorrections?.recommendations?.length));
 
-          // Update user message with corrections and recommendations if parsing succeeded
+          // Update assistant message with corrections and recommendations
           if (parsedCorrections?.corrections?.length || parsedCorrections?.recommendations?.length) {
-            setMessages(prev => 
-              prev.map(msg => 
+            console.log('[Debug] Updating message with corrections/recommendations');
+            setMessages(prev => {
+              const updated = prev.map(msg => 
                 msg.id === userMessage.id 
                   ? {
                       ...msg,
                       corrections: parsedCorrections.corrections,
-                      recommendations: parsedCorrections.recommendations
+                      recommendations: parsedCorrections.recommendations,
+                      debugInfo: correctionResponse.rawResponse
                     }
                   : msg
-              )
-            );
+              );
+              console.log('[Debug] Updated messages:', updated);
+              return updated;
+            });
+          } else {
+            console.log('[Debug] No corrections or recommendations to display');
           }
         } catch (e) {
-          console.error('Error parsing corrections response:', e);
-          console.log('Raw response was:', correctionResponse.rawResponse);
+          console.error('[Debug] Error parsing corrections response:', e);
+          console.log('[Debug] Raw response that caused error:', correctionResponse.rawResponse);
         }
+      } else {
+        console.log('[Debug] No valid correction response:', {
+          hasResponse: Boolean(correctionResponse),
+          hasError: Boolean(correctionResponse?.error),
+          hasRawResponse: Boolean(correctionResponse?.rawResponse)
+        });
       }
 
       // Handle chat response error
@@ -646,108 +701,75 @@ export default function ChatInterface() {
       <div className="flex-1 overflow-y-auto bg-gray-50 pb-[76px]">
         <div className="p-4 space-y-4">
           {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
+            <>
               <div
-                className={`max-w-[80%] rounded-lg p-3 shadow-sm ${
-                  message.type === 'user'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-white text-gray-800'
-                }`}
+                key={message.id}
+                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <p className="whitespace-pre-wrap break-words">
-                  {message.text}
-                  {message.type === 'assistant' && message.id.startsWith('temp-') && message.text === '' && (
-                    <span className="inline-flex items-center">
-                      <span className="typing-dot">.</span>
-                      <span className="typing-dot">.</span>
-                      <span className="typing-dot">.</span>
-                    </span>
-                  )}
-                </p>
-                {message.type === 'user' && ((message.corrections && message.corrections?.length > 0) || (message.recommendations && message.recommendations?.length > 0)) && (
-                  <div className="mt-1 text-sm flex gap-1.5 justify-end" ref={popupRef}>
-                    {message.corrections && message.corrections?.length > 0 && (
-                      <details 
-                        open={openSection?.messageId === message.id && openSection?.type === 'corrections'}
-                        onToggle={(e) => {
-                          const details = e.currentTarget;
-                          if (details.open) {
-                            setOpenSection({ messageId: message.id, type: 'corrections' });
-                          } else if (openSection?.messageId === message.id && openSection?.type === 'corrections') {
-                            setOpenSection(null);
-                          }
-                        }}
-                      >
-                        <summary className="cursor-pointer hover:opacity-90 flex items-center">
-                          <svg className="w-3 h-3 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </summary>
-                        <div className="absolute mt-2 bg-white text-gray-800 rounded-lg shadow-lg p-3 w-64 right-0 z-10">
-                          {message.corrections.map((correction, index) => (
-                            <div key={index} className="mb-2 last:mb-0">
-                              <p className="line-through opacity-75">{correction.original}</p>
-                              <p className="font-medium">{correction.corrected}</p>
-                              <p className="text-xs mt-1 opacity-90">{correction.explanation}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
+                <div
+                  className={`max-w-[80%] rounded-lg p-3 shadow-sm ${
+                    message.type === 'user'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white text-gray-800'
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap break-words">
+                    {message.text}
+                    {message.type === 'assistant' && message.id.startsWith('temp-') && message.text === '' && (
+                      <span className="inline-flex items-center">
+                        <span className="typing-dot">.</span>
+                        <span className="typing-dot">.</span>
+                        <span className="typing-dot">.</span>
+                      </span>
                     )}
-                    {message.recommendations && message.recommendations?.length > 0 && (
-                      <details
-                        open={openSection?.messageId === message.id && openSection?.type === 'recommendations'}
-                        onToggle={(e) => {
-                          const details = e.currentTarget;
-                          if (details.open) {
-                            setOpenSection({ messageId: message.id, type: 'recommendations' });
-                          } else if (openSection?.messageId === message.id && openSection?.type === 'recommendations') {
-                            setOpenSection(null);
-                          }
-                        }}
-                      >
-                        <summary className="cursor-pointer hover:opacity-90 flex items-center">
-                          <svg className="w-3 h-3 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 2v2m8 8h2M2 12h2m2-8L8 6m8 0l2-2M6 18l2-2m8 2l2-2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </summary>
-                        <div className="absolute mt-2 bg-white text-gray-800 rounded-lg shadow-lg p-3 w-64 right-0 z-10">
-                          {message.recommendations.map((rec, index) => (
-                            <div key={index} className="mb-2 last:mb-0">
-                              <p className="opacity-75">{rec.original}</p>
-                              <p className="font-medium">{rec.suggestion}</p>
-                              <p className="text-xs mt-1 opacity-90">{rec.explanation}</p>
+                  </p>
+                </div>
+              </div>
+              {message.type === 'user' && ((message.corrections && message.corrections.length > 0) || (message.recommendations && message.recommendations.length > 0)) && (
+                <div className="flex justify-end mt-2">
+                  <div className="max-w-[80%] rounded-lg p-3 shadow-sm bg-yellow-50 text-gray-800">
+                    {message.corrections && message.corrections.length > 0 && (
+                      <div className="text-sm">
+                        <p className="font-medium mb-2">Corrections:</p>
+                        {message.corrections.map((correction, index) => (
+                          <div key={index} className="mb-3 last:mb-0 border-b border-yellow-100 pb-3 last:border-0 last:pb-0">
+                            <div className="flex items-start gap-2">
+                              <div className="text-red-500 shrink-0">
+                                <svg className="w-4 h-4 mt-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M6 18L18 6M6 6l12 12" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              </div>
+                              <p className="line-through text-red-500">{correction.original}</p>
                             </div>
-                          ))}
-                        </div>
-                      </details>
+                            <div className="flex items-start gap-2 mt-1">
+                              <div className="text-green-500 shrink-0">
+                                <svg className="w-4 h-4 mt-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              </div>
+                              <p className="text-green-700">{correction.corrected}</p>
+                            </div>
+                            <p className="text-xs mt-2 text-gray-600 pl-6">{correction.explanation}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {message.recommendations && message.recommendations.length > 0 && (
+                      <div className="text-sm mt-4 first:mt-0">
+                        <p className="font-medium mb-2">Recommendations:</p>
+                        {message.recommendations.map((rec, index) => (
+                          <div key={index} className="mb-3 last:mb-0 border-b border-yellow-100 pb-3 last:border-0 last:pb-0">
+                            <p className="text-gray-600">{rec.original}</p>
+                            <p className="font-medium mt-1 text-yellow-700">→ {rec.suggestion}</p>
+                            <p className="text-xs mt-2 text-gray-600">{rec.explanation}</p>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
-                )}
-                {message.type === 'assistant' && !message.id.startsWith('temp-') && 
-                 !isVerificationMessage(message) && (
-                  <button
-                    onClick={() => {
-                      const messageIndex = messages.findIndex(msg => msg.id === message.id);
-                      if (messageIndex > 0 && messages[messageIndex - 1].type === 'user') {
-                        const userMessage = messages[messageIndex - 1];
-                        setMessages(messages.slice(0, messageIndex));
-                        handleRegenerateResponse(userMessage);
-                      }
-                    }}
-                    className="mt-2 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                    Regenerate response
-                  </button>
-                )}
-              </div>
-            </div>
+                </div>
+              )}
+            </>
           ))}
           <div ref={messagesEndRef} />
         </div>

@@ -7,11 +7,25 @@ const openai = new OpenAI({
 
 // Get verification code from environment variable
 const verificationCode = process.env.VERIFICATION_CODE || '';
+console.log('Environment check:', {
+  hasVerificationCode: !!process.env.VERIFICATION_CODE,
+  verificationCodeLength: verificationCode.length
+});
 
 export default async function handler(
   request: VercelRequest,
   response: VercelResponse
 ) {
+  // Add CORS headers
+  response.setHeader('Access-Control-Allow-Origin', '*');
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  // Handle preflight request
+  if (request.method === 'OPTIONS') {
+    return response.status(200).end();
+  }
+
   if (request.method !== 'POST') {
     return response.status(405).json({ error: 'Method not allowed' });
   }
@@ -19,8 +33,30 @@ export default async function handler(
   try {
     const { text, messages, accessCode, assistantId } = request.body;
 
+    // Log incoming request
+    console.log('Corrections API Request:', {
+      hasText: !!text,
+      textLength: text?.length,
+      hasAccessCode: !!accessCode,
+      accessCodeLength: accessCode?.length,
+      messageCount: messages?.length,
+      assistantId
+    });
+
     // Verify access code
-    if (accessCode !== verificationCode) {
+    const expectedCode = verificationCode.trim().toLowerCase();
+    const providedCode = (accessCode || '').trim().toLowerCase();
+    
+    console.log('Access verification:', {
+      matches: providedCode === expectedCode,
+      providedCodeLength: providedCode.length,
+      expectedCodeLength: expectedCode.length,
+      providedCode: providedCode.slice(0, 2) + '...',
+      expectedCode: expectedCode.slice(0, 2) + '...'
+    });
+    
+    if (providedCode !== expectedCode) {
+      console.log('Invalid access code provided');
       return response.status(401).json({ error: 'Invalid access code' });
     }
 
