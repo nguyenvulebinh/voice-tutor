@@ -8,13 +8,7 @@ const nextConfig = {
   // Disable server-side features since we're deploying to GitHub Pages
   typescript: {
     ignoreBuildErrors: true,
-  },
-  // Exclude API routes and other server-side only paths
-  exportPathMap: async function() {
-    return {
-      '/': { page: '/' },
-    }
-  },
+  }
 }
 
 module.exports = nextConfig 
