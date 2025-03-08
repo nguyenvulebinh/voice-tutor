@@ -8,7 +8,14 @@ const nextConfig = {
   // Disable server-side features since we're deploying to GitHub Pages
   typescript: {
     ignoreBuildErrors: true,
-  }
+  },
+  // Disable server components and API routes for static export
+  experimental: {
+    appDir: true,
+  },
+  // Ignore API routes during static export
+  rewrites: () => [],
+  trailingSlash: true
 }
 
 module.exports = nextConfig 
