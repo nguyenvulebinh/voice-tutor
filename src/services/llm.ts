@@ -5,6 +5,26 @@ export interface Message {
   content: string;
 }
 
+export interface CorrectionRequest {
+  text: string;
+  accessCode: string;
+}
+
+export interface CorrectionResponse {
+  rawResponse?: string;
+  corrections?: Array<{
+    original: string;
+    corrected: string;
+    explanation: string;
+  }>;
+  recommendations?: Array<{
+    original: string;
+    suggestion: string;
+    explanation: string;
+  }>;
+  error?: string;
+}
+
 export interface StreamResponse {
   text: string;
   status: 'in_progress' | 'completed' | 'error';
@@ -18,6 +38,59 @@ export interface StreamResponse {
   verified?: boolean;
 }
 
+const CORRECTION_ASSISTANT_ID = 'asst_j3C1nTEVWalxXCuIXEECu4lK';
+
+export async function getCorrectionsAndImprovements(
+  text: string,
+  accessCode: string,
+  messages: Message[] = []
+): Promise<CorrectionResponse> {
+  try {
+    console.log('Sending correction request:', {
+      textLength: text.length,
+      hasAccessCode: !!accessCode,
+      accessCodeLength: accessCode?.length,
+      messageCount: messages.length
+    });
+
+    const response = await fetch(`${API_CONFIG.API_BASE_URL}${API_CONFIG.CORRECTIONS_ENDPOINT}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        text,
+        messages,
+        accessCode,
+        assistantId: CORRECTION_ASSISTANT_ID
+      }),
+    });
+
+    console.log('Correction response status:', response.status);
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Correction error response:', error);
+      throw new Error(error.error || 'Failed to get corrections');
+    }
+
+    const data = await response.json();
+    console.log('Correction result:', {
+      hasCorrections: !!data.corrections?.length,
+      correctionsCount: data.corrections?.length,
+      hasRecommendations: !!data.recommendations?.length,
+      recommendationsCount: data.recommendations?.length
+    });
+
+    return data;
+  } catch (error) {
+    console.error('Correction error:', error);
+    return { 
+      error: error instanceof Error ? error.message : 'Failed to get corrections and improvements'
+    };
+  }
+}
+
 export async function verifyAccessCode(code: string): Promise<boolean> {
   try {
     const requestBody = {
@@ -27,7 +100,7 @@ export async function verifyAccessCode(code: string): Promise<boolean> {
     };
     console.log('Sending verification request...');
 
-    const response = await fetch(`${API_CONFIG.API_BASE_URL}/chat`, {
+    const response = await fetch(`${API_CONFIG.API_BASE_URL}${API_CONFIG.CHAT_ENDPOINT}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

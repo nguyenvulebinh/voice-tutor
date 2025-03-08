@@ -14,6 +14,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import transcribeHandler from './api/transcribe';
 import chatHandler from './api/chat';
+import correctionsHandler from './api/corrections';
 
 const app = express();
 const PORT = 3001;
@@ -31,6 +32,7 @@ app.use(express.json());
 // API routes
 app.post('/api/transcribe', (req: Request, res: Response) => transcribeHandler(req as any, res as any));
 app.post('/api/chat', (req: Request, res: Response) => chatHandler(req as any, res as any));
+app.post('/api/corrections', (req: Request, res: Response) => correctionsHandler(req as any, res as any));
 
 app.listen(PORT, () => {
   console.log(`API server running at http://localhost:${PORT}`);

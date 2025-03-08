@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { transcribeAudio } from '@/services/stt';
-import { getChatResponse, Message as ChatMessage, verifyAccessCode } from '@/services/llm';
+import { getChatResponse, Message as ChatMessage, verifyAccessCode, getCorrectionsAndImprovements, CorrectionResponse } from '@/services/llm';
 import { synthesizeSpeech } from '@/services/tts';
 import { getMockAudio } from '@/services/api';
 
@@ -12,6 +12,11 @@ interface Message {
   corrections?: {
     original: string;
     corrected: string;
+    explanation: string;
+  }[];
+  recommendations?: {
+    original: string;
+    suggestion: string;
     explanation: string;
   }[];
 }
@@ -39,10 +44,12 @@ export default function ChatInterface() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
   const [accessCode, setAccessCode] = useState<string | null>(null);
+  const [openSection, setOpenSection] = useState<{ messageId: string, type: 'corrections' | 'recommendations' } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -92,6 +99,20 @@ export default function ChatInterface() {
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // Add this useEffect for handling clicks outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (popupRef.current && !popupRef.current.contains(event.target as Node)) {
+        setOpenSection(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, []);
 
   const startRecording = async () => {
@@ -308,18 +329,18 @@ export default function ChatInterface() {
     setInputText('');
     setIsProcessing(true);
 
-    // Create and immediately show the typing indicator
-    const assistantMessage: Message = {
-      id: 'temp-' + Date.now().toString(),
-      text: '',  // Empty text to show only typing indicator
-      type: 'assistant'
-    };
-    setMessages(prev => [...prev, assistantMessage]);
-
     try {
+      // Create and immediately show the typing indicator
+      const assistantMessage: Message = {
+        id: 'temp-' + Date.now().toString(),
+        text: '',
+        type: 'assistant'
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+
       // Get complete chat history excluding the temporary message
       const chatHistory: ChatMessage[] = messages
-        .filter(msg => !msg.id.startsWith('temp-')) // Exclude temporary messages
+        .filter(msg => !msg.id.startsWith('temp-') && msg.id !== 'welcome')
         .map(msg => ({
           role: msg.type,
           content: msg.text
@@ -329,47 +350,80 @@ export default function ChatInterface() {
           content: userMessage.text
         });
 
-      // Get streaming response from LLM
-      const llmResponse = await getChatResponse(chatHistory, accessCode, (update) => {
-        // Only update if we have actual content
-        if (!update.text?.trim()) return;
-
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === assistantMessage.id 
-              ? {
-                  ...msg,
-                  text: update.text,
-                  corrections: update.corrections
-                }
-              : msg
-          )
-        );
-      }).catch(error => {
-        console.error('Chat API fetch error:', {
-          message: error.message,
-          status: error.status,
-          statusText: error.statusText,
-          url: error.url,
-          response: error.response
+      // Create a minimal history for corrections - just the last system response and current input
+      const correctionHistory: ChatMessage[] = [];
+      const lastSystemMessage = messages
+        .filter(msg => msg.type === 'assistant' && !msg.id.startsWith('temp-'))
+        .pop();
+      
+      if (lastSystemMessage) {
+        correctionHistory.push({
+          role: 'assistant',
+          content: lastSystemMessage.text
         });
-        // Check if error is a JSON parse error
-        if (error.message?.includes('JSON')) {
-          throw new Error('Received invalid response from server. Please try again.');
-        }
-        throw new Error('Failed to connect to the chat server. Please check your internet connection and try again.');
+      }
+      
+      correctionHistory.push({
+        role: 'user',
+        content: text
       });
 
-      if (llmResponse.error) {
-        // If access code is invalid, revert to verification state
-        if (llmResponse.error === 'Invalid access code') {
-          setIsVerified(false);
-          setAccessCode(null);
-          localStorage.removeItem('voice_tutor_verified');
-          localStorage.removeItem('voice_tutor_access_code');
-          setMessages(VERIFICATION_MESSAGES);
-          throw new Error('Your session has expired. Please enter the access code again.');
+      // Run corrections and chat response in parallel
+      const [correctionResponse, llmResponse] = await Promise.all([
+        // Get corrections and improvements with minimal history
+        getCorrectionsAndImprovements(text, accessCode, correctionHistory).catch(error => {
+          console.error('Correction API error:', error);
+          return { error: error.message, rawResponse: undefined } as CorrectionResponse;
+        }),
+        // Get streaming response from LLM with full history
+        getChatResponse(chatHistory, accessCode, (update) => {
+          // Only update if we have actual content
+          if (!update.text?.trim()) return;
+
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === assistantMessage.id 
+                ? {
+                    ...msg,
+                    text: update.text
+                  }
+                : msg
+            )
+          );
+        })
+      ]);
+
+      // Handle corrections if available and valid
+      if (correctionResponse && !correctionResponse.error && correctionResponse.rawResponse) {
+        try {
+          console.log('Raw response from corrections API:', correctionResponse.rawResponse);
+          // Remove markdown code block syntax if present
+          const jsonStr = correctionResponse.rawResponse.replace(/```json\n|\n```/g, '');
+          const parsedCorrections = JSON.parse(jsonStr);
+          console.log('Parsed corrections:', parsedCorrections);
+
+          // Update user message with corrections and recommendations if parsing succeeded
+          if (parsedCorrections?.corrections?.length || parsedCorrections?.recommendations?.length) {
+            setMessages(prev => 
+              prev.map(msg => 
+                msg.id === userMessage.id 
+                  ? {
+                      ...msg,
+                      corrections: parsedCorrections.corrections,
+                      recommendations: parsedCorrections.recommendations
+                    }
+                  : msg
+              )
+            );
+          }
+        } catch (e) {
+          console.error('Error parsing corrections response:', e);
+          console.log('Raw response was:', correctionResponse.rawResponse);
         }
+      }
+
+      // Handle chat response error
+      if (llmResponse.error) {
         throw new Error(llmResponse.error);
       }
 
@@ -380,13 +434,7 @@ export default function ChatInterface() {
           text: responseData.text,
           language: responseData.language || 'de'
         }).catch(error => {
-          console.error('TTS API fetch error:', {
-            message: error.message,
-            status: error.status,
-            statusText: error.statusText,
-            url: error.url
-          });
-          // Don't throw error for TTS failures, just log it
+          console.error('TTS API fetch error:', error);
           return { data: undefined };
         });
 
@@ -396,7 +444,6 @@ export default function ChatInterface() {
               ? {
                   ...msg,
                   text: responseData.text,
-                  corrections: responseData.corrections,
                   audio: ttsResponse.data
                 }
               : msg
@@ -405,16 +452,14 @@ export default function ChatInterface() {
       }
     } catch (error) {
       console.error('Error in conversation:', error);
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === assistantMessage.id 
-            ? {
-                ...msg,
-                text: error instanceof Error ? error.message : 'Connection error. Please check your internet and try again.'
-              }
-            : msg
-        )
-      );
+      setMessages(prev => [
+        ...prev.slice(0, -1), // Remove the temporary message
+        {
+          id: Date.now().toString(),
+          text: error instanceof Error ? error.message : 'Connection error. Please check your internet and try again.',
+          type: 'assistant'
+        }
+      ]);
     } finally {
       setIsProcessing(false);
     }
@@ -482,6 +527,146 @@ export default function ChatInterface() {
            verificationTexts.some(text => message.text.includes(text));
   };
 
+  const handleRegenerateResponse = async (userMessage: Message) => {
+    if (!isVerified || !accessCode) return;
+
+    setIsProcessing(true);
+    try {
+      // Create and immediately show the typing indicator
+      const assistantMessage: Message = {
+        id: 'temp-' + Date.now().toString(),
+        text: '',
+        type: 'assistant'
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+
+      // Get complete chat history excluding the temporary message
+      const chatHistory: ChatMessage[] = messages
+        .filter(msg => !msg.id.startsWith('temp-') && msg.id !== 'welcome')
+        .map(msg => ({
+          role: msg.type,
+          content: msg.text
+        }))
+        .concat({
+          role: userMessage.type,
+          content: userMessage.text
+        });
+
+      // Create a minimal history for corrections - just the last system response and current input
+      const correctionHistory: ChatMessage[] = [];
+      const lastSystemMessage = messages
+        .filter(msg => msg.type === 'assistant' && !msg.id.startsWith('temp-'))
+        .pop();
+      
+      if (lastSystemMessage) {
+        correctionHistory.push({
+          role: 'assistant',
+          content: lastSystemMessage.text
+        });
+      }
+      
+      correctionHistory.push({
+        role: 'user',
+        content: userMessage.text
+      });
+
+      // Run corrections and chat response in parallel
+      const [correctionResponse, llmResponse] = await Promise.all([
+        // Get corrections and improvements with minimal history
+        getCorrectionsAndImprovements(userMessage.text, accessCode, correctionHistory).catch(error => {
+          console.error('Correction API error:', error);
+          return { error: error.message, rawResponse: undefined } as CorrectionResponse;
+        }),
+        // Get streaming response from LLM with full history
+        getChatResponse(chatHistory, accessCode, (update) => {
+          // Only update if we have actual content
+          if (!update.text?.trim()) return;
+
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === assistantMessage.id 
+                ? {
+                    ...msg,
+                    text: update.text
+                  }
+                : msg
+            )
+          );
+        })
+      ]);
+
+      // Handle corrections if available and valid
+      if (correctionResponse && !correctionResponse.error && correctionResponse.rawResponse) {
+        try {
+          console.log('Raw response from corrections API:', correctionResponse.rawResponse);
+          // Remove markdown code block syntax if present
+          const jsonStr = correctionResponse.rawResponse.replace(/```json\n|\n```/g, '');
+          const parsedCorrections = JSON.parse(jsonStr);
+          console.log('Parsed corrections:', parsedCorrections);
+
+          // Update user message with corrections and recommendations if parsing succeeded
+          if (parsedCorrections?.corrections?.length || parsedCorrections?.recommendations?.length) {
+            setMessages(prev => 
+              prev.map(msg => 
+                msg.id === userMessage.id 
+                  ? {
+                      ...msg,
+                      corrections: parsedCorrections.corrections,
+                      recommendations: parsedCorrections.recommendations
+                    }
+                  : msg
+              )
+            );
+          }
+        } catch (e) {
+          console.error('Error parsing corrections response:', e);
+          console.log('Raw response was:', correctionResponse.rawResponse);
+        }
+      }
+
+      // Handle chat response error
+      if (llmResponse.error) {
+        throw new Error(llmResponse.error);
+      }
+
+      // Generate audio from the final response
+      const responseData = llmResponse.data;
+      if (responseData?.text) {
+        const ttsResponse = await synthesizeSpeech({
+          text: responseData.text,
+          language: responseData.language || 'de'
+        }).catch(error => {
+          console.error('TTS API fetch error:', error);
+          return { data: undefined };
+        });
+
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === assistantMessage.id 
+              ? {
+                  ...msg,
+                  text: responseData.text,
+                  audio: ttsResponse.data
+                }
+              : msg
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Error in conversation:', error);
+      setMessages(prev => [
+        ...prev.slice(0, -1), // Remove the temporary message
+        {
+          id: Date.now().toString(),
+          text: error instanceof Error ? error.message : 'Connection error. Please check your internet and try again.',
+          type: 'assistant'
+        }
+      ]);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-[100dvh] max-w-4xl mx-auto relative">
       <div className="flex-1 overflow-y-auto bg-gray-50 pb-[76px]">
@@ -508,16 +693,64 @@ export default function ChatInterface() {
                     </span>
                   )}
                 </p>
-                {message.corrections && message.corrections.length > 0 && (
-                  <div className="mt-3 text-sm border-t border-opacity-20 border-gray-200 pt-2">
-                    <p className="font-semibold mb-2">Corrections:</p>
-                    {message.corrections.map((correction, index) => (
-                      <div key={index} className="mb-2 last:mb-0">
-                        <p className="line-through text-red-500 opacity-75">{correction.original}</p>
-                        <p className="text-green-500 font-medium">{correction.corrected}</p>
-                        <p className="text-gray-600 text-xs mt-1">{correction.explanation}</p>
-                      </div>
-                    ))}
+                {message.type === 'user' && ((message.corrections && message.corrections?.length > 0) || (message.recommendations && message.recommendations?.length > 0)) && (
+                  <div className="mt-1 text-sm flex gap-1.5 justify-end" ref={popupRef}>
+                    {message.corrections && message.corrections?.length > 0 && (
+                      <details 
+                        open={openSection?.messageId === message.id && openSection?.type === 'corrections'}
+                        onToggle={(e) => {
+                          const details = e.currentTarget;
+                          if (details.open) {
+                            setOpenSection({ messageId: message.id, type: 'corrections' });
+                          } else if (openSection?.messageId === message.id && openSection?.type === 'corrections') {
+                            setOpenSection(null);
+                          }
+                        }}
+                      >
+                        <summary className="cursor-pointer hover:opacity-90 flex items-center">
+                          <svg className="w-3 h-3 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </summary>
+                        <div className="absolute mt-2 bg-white text-gray-800 rounded-lg shadow-lg p-3 w-64 right-0 z-10">
+                          {message.corrections.map((correction, index) => (
+                            <div key={index} className="mb-2 last:mb-0">
+                              <p className="line-through opacity-75">{correction.original}</p>
+                              <p className="font-medium">{correction.corrected}</p>
+                              <p className="text-xs mt-1 opacity-90">{correction.explanation}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                    {message.recommendations && message.recommendations?.length > 0 && (
+                      <details
+                        open={openSection?.messageId === message.id && openSection?.type === 'recommendations'}
+                        onToggle={(e) => {
+                          const details = e.currentTarget;
+                          if (details.open) {
+                            setOpenSection({ messageId: message.id, type: 'recommendations' });
+                          } else if (openSection?.messageId === message.id && openSection?.type === 'recommendations') {
+                            setOpenSection(null);
+                          }
+                        }}
+                      >
+                        <summary className="cursor-pointer hover:opacity-90 flex items-center">
+                          <svg className="w-3 h-3 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 2v2m8 8h2M2 12h2m2-8L8 6m8 0l2-2M6 18l2-2m8 2l2-2" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </summary>
+                        <div className="absolute mt-2 bg-white text-gray-800 rounded-lg shadow-lg p-3 w-64 right-0 z-10">
+                          {message.recommendations.map((rec, index) => (
+                            <div key={index} className="mb-2 last:mb-0">
+                              <p className="opacity-75">{rec.original}</p>
+                              <p className="font-medium">{rec.suggestion}</p>
+                              <p className="text-xs mt-1 opacity-90">{rec.explanation}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 )}
                 {message.type === 'assistant' && !message.id.startsWith('temp-') && 
@@ -531,7 +764,7 @@ export default function ChatInterface() {
                         // Remove this and all subsequent messages
                         setMessages(messages.slice(0, messageIndex));
                         // Regenerate response
-                        handleUserMessage(userMessage.text);
+                        handleRegenerateResponse(userMessage);
                       }
                     }}
                     className="mt-2 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
