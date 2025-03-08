@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Voice Tutor
+
+A static web application for language learning with voice interaction capabilities. This application provides a chat interface where users can practice their language skills by speaking or typing, and receive responses both in text and audio format.
+
+## Features
+
+- Voice input support with real-time recording
+- Text input for typing messages
+- Chat interface with message history
+- Text-to-Speech playback for assistant responses
+- Modern, responsive UI design
+- Ready for integration with external STT, TTS, and LLM services
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- Node.js 18.0.0 or later
+- npm 9.0.0 or later
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/yourusername/voice-tutor.git
+cd voice-tutor
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Start the development server:
+```bash
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## Learn More
+### Building for Production
 
-To learn more about Next.js, take a look at the following resources:
+To create a production build:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run build
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The static files will be generated in the `out` directory, ready to be deployed to GitHub Pages or any static hosting service.
 
-## Deploy on Vercel
+## Integration Points
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The application is designed to work with external services. To integrate with your services:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Speech-to-Text (STT):
+   - Modify the `simulateSTT` function in `src/components/ChatInterface.tsx`
+   - Replace the simulation with actual API calls to your STT service
+
+2. Language Model (LLM):
+   - Update the `handleUserMessage` function in `src/components/ChatInterface.tsx`
+   - Implement the actual API call to your LLM service
+
+3. Text-to-Speech (TTS):
+   - In the `handleUserMessage` function, replace the simulated audio URL
+   - Implement the actual API call to your TTS service
+
+## License
+
+MIT
