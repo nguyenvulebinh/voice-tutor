@@ -45,7 +45,6 @@ export default function ChatInterface() {
   const [isVerified, setIsVerified] = useState(false);
   const [accessCode, setAccessCode] = useState<string | null>(null);
   const [openSection, setOpenSection] = useState<{ messageId: string, type: 'corrections' | 'recommendations' } | null>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -373,6 +372,14 @@ export default function ChatInterface() {
         // Get corrections and improvements with minimal history
         getCorrectionsAndImprovements(text, accessCode, correctionHistory).catch(error => {
           console.error('Correction API error:', error);
+          // If access code is invalid, revert to verification state
+          if (error.message === 'Invalid access code') {
+            setIsVerified(false);
+            setAccessCode(null);
+            localStorage.removeItem('voice_tutor_verified');
+            localStorage.removeItem('voice_tutor_access_code');
+            setMessages(VERIFICATION_MESSAGES);
+          }
           return { error: error.message, rawResponse: undefined } as CorrectionResponse;
         }),
         // Get streaming response from LLM with full history
@@ -472,47 +479,6 @@ export default function ChatInterface() {
     }
   };
 
-  const playAudio = useCallback((audioUrl: string) => {
-    if (audioRef.current) {
-      audioRef.current.src = audioUrl;
-      audioRef.current.play().catch(error => {
-        console.error('Error playing audio:', error);
-      });
-    }
-  }, []);
-
-  const resetChat = () => {
-    // Reset all state variables
-    setMessages(VERIFICATION_MESSAGES);
-    setIsVerified(false);
-    setAccessCode(null);
-    setInputText('');
-    setIsProcessing(false);
-    setIsRecording(false);
-
-    // Stop any ongoing recording
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-    }
-    mediaRecorderRef.current = null;
-    chunksRef.current = [];
-
-    // Stop any playing audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-    }
-
-    // Clear all storage
-    localStorage.removeItem('voice_tutor_verified');
-    localStorage.removeItem('voice_tutor_access_code');
-    localStorage.removeItem('voice_tutor_messages');
-
-    // Force scroll to top
-    window.scrollTo(0, 0);
-  };
-
   // Helper function to check if a message is verification-related
   const isVerificationMessage = (message: Message) => {
     const verificationTexts = [
@@ -575,6 +541,14 @@ export default function ChatInterface() {
         // Get corrections and improvements with minimal history
         getCorrectionsAndImprovements(userMessage.text, accessCode, correctionHistory).catch(error => {
           console.error('Correction API error:', error);
+          // If access code is invalid, revert to verification state
+          if (error.message === 'Invalid access code') {
+            setIsVerified(false);
+            setAccessCode(null);
+            localStorage.removeItem('voice_tutor_verified');
+            localStorage.removeItem('voice_tutor_access_code');
+            setMessages(VERIFICATION_MESSAGES);
+          }
           return { error: error.message, rawResponse: undefined } as CorrectionResponse;
         }),
         // Get streaming response from LLM with full history
@@ -679,7 +653,7 @@ export default function ChatInterface() {
               <div
                 className={`max-w-[80%] rounded-lg p-3 shadow-sm ${
                   message.type === 'user'
-                    ? 'bg-primary text-white'
+                    ? 'bg-blue-500 text-white'
                     : 'bg-white text-gray-800'
                 }`}
               >
@@ -757,13 +731,10 @@ export default function ChatInterface() {
                  !isVerificationMessage(message) && (
                   <button
                     onClick={() => {
-                      // Find the user message that triggered this response
                       const messageIndex = messages.findIndex(msg => msg.id === message.id);
                       if (messageIndex > 0 && messages[messageIndex - 1].type === 'user') {
                         const userMessage = messages[messageIndex - 1];
-                        // Remove this and all subsequent messages
                         setMessages(messages.slice(0, messageIndex));
-                        // Regenerate response
                         handleRegenerateResponse(userMessage);
                       }
                     }}
@@ -782,12 +753,17 @@ export default function ChatInterface() {
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-gray-50">
+      <div className="fixed bottom-0 left-0 right-0 bg-gray-50 border-t border-gray-200">
         <div className="max-w-4xl mx-auto">
           <form onSubmit={handleSubmit} className="p-4">
             {isRecording ? (
               <div className="flex items-center justify-between px-6 py-3 rounded-full bg-blue-50">
-                <span className="text-gray-600">Listening...</span>
+                <span className="text-gray-600 flex items-center gap-2">
+                  <span className="recording-pulse">
+                    <span className="block w-2 h-2 rounded-full bg-red-500"></span>
+                  </span>
+                  Listening...
+                </span>
                 <button
                   type="button"
                   onClick={stopRecording}
@@ -806,7 +782,7 @@ export default function ChatInterface() {
                   onChange={(e) => setInputText(e.target.value)}
                   placeholder={isVerified ? "Type your message..." : "Enter access code..."}
                   disabled={isProcessing}
-                  className="flex-1 px-4 py-3 border-none focus:outline-none focus:ring-0 placeholder-gray-400 text-gray-700 disabled:opacity-50"
+                  className="flex-1 px-4 py-3 rounded-full bg-white border-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400 text-gray-700 disabled:opacity-50"
                 />
                 <div className="flex items-center gap-2">
                   {isVerified && (
@@ -840,8 +816,6 @@ export default function ChatInterface() {
           </form>
         </div>
       </div>
-
-      <audio ref={audioRef} className="hidden" />
     </div>
   );
 } 

@@ -9,6 +9,12 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  // Exclude API routes and other server-side only paths
+  exportPathMap: async function() {
+    return {
+      '/': { page: '/' },
+    }
+  },
 }
 
 module.exports = nextConfig 
