@@ -1,23 +1,48 @@
 import { ApiResponse } from './api';
+import { API_CONFIG, validateConfig } from '../config/api';
 
-const MOCK_TRANSCRIPTIONS = [
-  "I goed to the store yesterday",
-  "She don't like coffee",
-  "I want to improve my english",
-  "Can you help me practice my pronunciation?",
-  "I am learning English for two years"
-];
+export async function transcribeAudio(audioBlob: Blob, accessCode: string): Promise<ApiResponse<string>> {
+  if (!validateConfig()) {
+    return { 
+      data: '', 
+      error: 'API configuration is not valid' 
+    };
+  }
 
-export async function transcribeAudio(audioBlob: Blob): Promise<ApiResponse<string>> {
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
   try {
-    // For prototype, return a random mock transcription
-    const mockText = MOCK_TRANSCRIPTIONS[Math.floor(Math.random() * MOCK_TRANSCRIPTIONS.length)];
-    return { data: mockText };
+    // Create form data
+    const formData = new FormData();
+    formData.append('file', audioBlob);
+    formData.append('accessCode', accessCode);
+
+    console.log('Sending audio for transcription...');
+    const response = await fetch(`${API_CONFIG.API_BASE_URL}/transcribe`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to transcribe audio');
+    }
+
+    const data = await response.json();
+    console.log('Received transcription:', data);
+
+    if (!data.text) {
+      throw new Error('No transcription received');
+    }
+
+    return { data: data.text };
   } catch (error) {
-    console.error('STT error:', error);
-    return { data: '', error: error instanceof Error ? error.message : 'Failed to transcribe audio' };
+    console.error('STT error details:', {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    return { 
+      data: '', 
+      error: error instanceof Error ? error.message : 'Failed to transcribe audio' 
+    };
   }
 } 

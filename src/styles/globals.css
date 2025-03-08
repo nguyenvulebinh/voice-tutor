@@ -5,10 +5,52 @@
 :root {
   --foreground-rgb: 0, 0, 0;
   --background-rgb: 255, 255, 255;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-rgb));
   min-height: 100vh;
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+
+.text-primary {
+  color: var(--primary);
+}
+
+/* Typing indicator animation */
+.typing-dot {
+  animation: typingDot 1.4s infinite;
+  animation-fill-mode: both;
+  margin: 0 2px;
+  font-size: 20px;
+  line-height: 0;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typingDot {
+  0% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  20% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+  40%, 100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
 } 

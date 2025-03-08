@@ -31,12 +31,20 @@ cd voice-tutor
 npm install
 ```
 
-3. Start the development server:
+3. Set up environment variables:
+   - Create a `.env.local` file in the root directory
+   - Add your Groq API key:
+     ```
+     NEXT_PUBLIC_GROQ_API_KEY=your_groq_api_key_here
+     ```
+   - Get your API key from [Groq's website](https://console.groq.com)
+
+4. Start the development server:
 ```bash
 npm run dev
 ```
 
-4. Open [http://localhost:3000](http://localhost:3000) in your browser.
+5. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Building for Production
 
