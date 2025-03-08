@@ -58,6 +58,16 @@ export async function getChatResponse(
   onUpdate?: (response: StreamResponse) => void
 ): Promise<{ data?: StreamResponse; error?: string }> {
   try {
+    console.log('Sending chat request:', {
+      messageCount: messages.length,
+      lastMessage: {
+        role: messages[messages.length - 1].role,
+        contentPreview: messages[messages.length - 1].content.slice(0, 50) + '...'
+      },
+      hasAccessCode: !!accessCode,
+      accessCodeLength: accessCode?.length
+    });
+
     const response = await fetch(`${API_CONFIG.API_BASE_URL}/chat`, {
       method: 'POST',
       headers: {
@@ -69,8 +79,11 @@ export async function getChatResponse(
       }),
     });
 
+    console.log('Chat response status:', response.status);
+
     if (!response.ok) {
       const error = await response.json();
+      console.error('Chat error response:', error);
       throw new Error(error.error || 'Failed to get chat response');
     }
 
@@ -79,14 +92,25 @@ export async function getChatResponse(
       throw new Error('No response stream available');
     }
 
+    console.log('Starting to read response stream...');
     let lastResponse: StreamResponse | undefined;
+    let chunkCount = 0;
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        console.log('Response stream complete:', {
+          totalChunks: chunkCount,
+          finalResponseLength: lastResponse?.text?.length
+        });
+        break;
+      }
 
       // Convert the chunk to text
       const chunk = new TextDecoder().decode(value);
+      chunkCount++;
+      console.log(`Processing chunk ${chunkCount}:`, { chunkSize: chunk.length });
+      
       const lines = chunk.split('\n');
 
       // Process each line
@@ -95,9 +119,17 @@ export async function getChatResponse(
           try {
             const data = JSON.parse(line.slice(6));
             lastResponse = data;
+            console.log('Received response update:', {
+              status: data.status,
+              textLength: data.text?.length,
+              hasCorrections: !!data.corrections?.length,
+              correctionsCount: data.corrections?.length
+            });
+            
             onUpdate?.(data);
 
             if (data.status === 'completed' || data.status === 'error') {
+              console.log('Stream ended with status:', data.status);
               reader.cancel();
               if (data.error) {
                 throw new Error(data.error);

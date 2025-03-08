@@ -54,12 +54,44 @@ export default function ChatInterface() {
 
   // Check for existing verification and access code on component mount
   useEffect(() => {
-    const verified = sessionStorage.getItem('voice_tutor_verified');
-    const accessCode = sessionStorage.getItem('voice_tutor_access_code');
-    if (verified === 'true' && accessCode) {
+    const verified = localStorage.getItem('voice_tutor_verified');
+    const storedAccessCode = localStorage.getItem('voice_tutor_access_code');
+    const storedMessages = localStorage.getItem('voice_tutor_messages');
+    
+    if (verified === 'true' && storedAccessCode) {
       setIsVerified(true);
-      setMessages([...INITIAL_MESSAGES]);
+      setAccessCode(storedAccessCode);
+      if (storedMessages) {
+        try {
+          const parsedMessages = JSON.parse(storedMessages);
+          setMessages(parsedMessages);
+        } catch (e) {
+          console.error('Error parsing stored messages:', e);
+          setMessages([...INITIAL_MESSAGES]);
+        }
+      } else {
+        setMessages([...INITIAL_MESSAGES]);
+      }
     }
+  }, []);
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    if (isVerified) {
+      localStorage.setItem('voice_tutor_messages', JSON.stringify(messages));
+    }
+  }, [messages, isVerified]);
+
+  useEffect(() => {
+    // Handle page refresh/unload
+    const handleBeforeUnload = () => {
+      localStorage.removeItem('voice_tutor_verified');
+      localStorage.removeItem('voice_tutor_access_code');
+      localStorage.removeItem('voice_tutor_messages');
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   const startRecording = async () => {
@@ -218,6 +250,7 @@ export default function ChatInterface() {
         localStorage.setItem('voice_tutor_verified', 'true');
         localStorage.setItem('voice_tutor_access_code', code);
         setMessages([...INITIAL_MESSAGES]);
+        localStorage.setItem('voice_tutor_messages', JSON.stringify(INITIAL_MESSAGES));
       } else {
         console.log('Verification failed');
         setMessages(prev => [
@@ -279,7 +312,19 @@ export default function ChatInterface() {
       // Include all previous messages in the chat history
       const systemMessage = {
         role: 'system' as const,
-        content: 'You are a German language tutor. When users make mistakes in German, provide corrections in this format:\nOriginal: "incorrect text"\nCorrection: "correct text"\nExplanation: why the correction was needed\n\nAlways respond in German first, then provide an English translation. Be encouraging and helpful.'
+        content: `You are an experienced and friendly German language tutor helping students improve their skills. Aim for a conversational tone, like chatting with a friend. Begin by assessing the student's current proficiency level and learning objectives, using spontaneous and small talk-style interactions. 
+
+Provide brief and engaging explanations of German grammar, vocabulary, pronunciation, and conversation practices. Offer exercises, examples, and real-life scenarios to reinforce learning. Correct errors kindly with clear explanations, and offer helpful suggestions. Encourage questions, interactive dialogue, and adapt your style to the student's pace and interests.
+
+Speak like a human with compact replies since the output is intended for text-to-speech. When interacting, keep the tone relaxed, ask follow-up questions, and seamlessly blend useful language tips with natural talk.
+
+When the student uses English or Vietnamese, start by responding in the same language before gently guiding them back to German. Your goal is to make learning supportive, thorough, and enjoyable.
+
+# Notes
+
+- Encourage everyday conversation by asking simple, engaging questions.
+- Keep replies concise and naturally flowing.
+- Adapt to the student's language preferences but guide them toward German speaking.`
       };
 
       // Get complete chat history excluding the temporary message
@@ -383,11 +428,35 @@ export default function ChatInterface() {
   }, []);
 
   const resetChat = () => {
+    // Reset all state variables
     setMessages(VERIFICATION_MESSAGES);
     setIsVerified(false);
     setAccessCode(null);
+    setInputText('');
+    setIsProcessing(false);
+    setIsRecording(false);
+
+    // Stop any ongoing recording
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
+    mediaRecorderRef.current = null;
+    chunksRef.current = [];
+
+    // Stop any playing audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+    }
+
+    // Clear all storage
     localStorage.removeItem('voice_tutor_verified');
     localStorage.removeItem('voice_tutor_access_code');
+    localStorage.removeItem('voice_tutor_messages');
+
+    // Force scroll to top
+    window.scrollTo(0, 0);
   };
 
   return (
@@ -503,10 +572,6 @@ export default function ChatInterface() {
       </div>
 
       <audio ref={audioRef} className="hidden" />
-
-      <button onClick={resetChat} className="p-2 text-red-500 hover:text-red-600">
-        Reset Chat
-      </button>
     </div>
   );
 } 

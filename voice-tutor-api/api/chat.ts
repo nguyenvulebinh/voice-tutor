@@ -59,6 +59,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const { messages, isVerification, accessCode } = req.body;
+    
+    // Log incoming request
+    console.log('Chat API Request:', {
+      isVerification,
+      messageCount: messages?.length,
+      lastMessageRole: messages?.[messages?.length - 1]?.role,
+      lastMessagePreview: messages?.[messages?.length - 1]?.content?.slice(0, 50) + '...'
+    });
+
     if (!messages) {
       return res.status(400).json({ error: 'Messages are required' });
     }
@@ -69,7 +78,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     console.log('Access verification:', {
       isVerification,
-      matches: providedCode === expectedCode
+      matches: providedCode === expectedCode,
+      providedCodeLength: providedCode.length,
+      expectedCodeLength: expectedCode.length
     });
 
     // For verification requests, just return the result
@@ -82,6 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // For chat requests, verify the access code
     if (providedCode !== expectedCode) {
+      console.log('Invalid access code provided');
       return res.json({
         error: 'Invalid access code',
         status: 'error'
@@ -94,25 +106,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Connection', 'keep-alive');
 
     // Create a thread
+    console.log('Creating OpenAI thread...');
     const thread = await openai.beta.threads.create();
+    console.log('Thread created:', thread.id);
 
     // Add the messages to the thread
+    console.log('Adding messages to thread...');
     for (const message of messages) {
       await openai.beta.threads.messages.create(thread.id, {
         role: message.role === 'assistant' ? 'assistant' : 'user',
         content: message.content
       });
     }
+    console.log('Messages added to thread');
 
     // Run the assistant
+    console.log('Starting assistant run...');
     const run = await openai.beta.threads.runs.create(thread.id, {
       assistant_id: ASSISTANT_ID
     });
+    console.log('Assistant run started:', run.id);
 
     // Poll for completion and stream the response
     let fullResponse = '';
+    let pollCount = 0;
     while (true) {
+      pollCount++;
+      console.log(`Polling run status (attempt ${pollCount})...`);
+      
       const runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+      console.log('Run status:', runStatus.status);
       
       if (runStatus.status === 'completed') {
         // Get the assistant's response
@@ -127,6 +150,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             // Extract corrections
             const corrections = extractCorrections(content);
+            console.log('Response processed:', {
+              contentLength: content.length,
+              correctionsCount: corrections.length
+            });
 
             // Send the final message
             res.write(`data: ${JSON.stringify({
@@ -139,6 +166,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         break;
       } else if (runStatus.status === 'failed') {
+        console.error('Assistant run failed:', runStatus);
         throw new Error('Assistant run failed');
       }
       
@@ -147,6 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // End the stream
+    console.log('Chat response completed successfully');
     res.end();
   } catch (error) {
     console.error('Chat error:', error);
